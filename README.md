@@ -1,3 +1,9 @@
+# Deprecated!
+
+As of Feb 11th 2020, request is fully deprecated. No new changes are expected to land. In fact, none have landed for some time.
+
+For more information about why request is deprecated and possible alternatives refer to
+[this issue](https://github.com/request/request/issues/3142).
 
 # Request - Simplified HTTP client
 
@@ -26,7 +32,7 @@ Request is designed to be the simplest way possible to make http calls. It suppo
 ```js
 const request = require('postman-request');
 request('http://www.google.com', function (error, response, body) {
-  console.log('error:', error); // Print the error if one occurred
+  console.error('error:', error); // Print the error if one occurred
   console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
   console.log('body:', body); // Print the HTML for the Google homepage.
 });
@@ -94,7 +100,7 @@ To easily handle errors when streaming requests, listen to the `error` event bef
 request
   .get('http://mysite.com/doodle.png')
   .on('error', function(err) {
-    console.log(err)
+    console.error(err)
   })
   .pipe(fs.createWriteStream('doodle.png'))
 ```
@@ -1002,12 +1008,9 @@ request.defaults({
     work around this, either use [`request.defaults`](#requestdefaultsoptions)
     with your pool options or create the pool object with the `maxSockets`
     property outside of the loop.
-- `timeout` - integer containing number of milliseconds, controls two timeouts
-  - Time to wait for a server to send response headers (and start the response body) before aborting the request.
-    Note that if the underlying TCP connection cannot be established,
-    the OS-wide TCP connection timeout will overrule the `timeout` option ([the
-    default in Linux can be anywhere from 20-120 seconds][linux-timeout]).
-  - Sets the socket to timeout after `timeout` milliseconds of inactivity on the socket.
+- `timeout` - integer containing number of milliseconds, controls two timeouts.
+  - **Read timeout**: Time to wait for a server to send response headers (and start the response body) before aborting the request.
+  - **Connection timeout**: Sets the socket to timeout after `timeout` milliseconds of inactivity. Note that increasing the timeout beyond the OS-wide TCP connection timeout will not have any effect ([the default in Linux can be anywhere from 20-120 seconds][linux-timeout])
 
 [linux-timeout]: http://www.sekuda.com/overriding_the_default_linux_kernel_20_second_tcp_socket_connect_timeout
 
