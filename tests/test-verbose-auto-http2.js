@@ -90,6 +90,7 @@ tape('HTTP: verbose=true', function (t) {
 tape('HTTP: redirect(HTTPS) + verbose=true', function (t) {
   var options = {
     verbose: true,
+    allowInsecureRedirect: true,
     strictSSL: false,
     protocolVersion: 'auto'
   }
@@ -153,6 +154,7 @@ tape('HTTPS: verbose=true', function (t) {
 tape('HTTPS: redirect(HTTP) + verbose=true', function (t) {
   var options = {
     verbose: true,
+    allowInsecureRedirect: true,
     strictSSL: false,
     protocolVersion: 'auto'
   }
