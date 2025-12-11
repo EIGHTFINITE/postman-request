@@ -289,6 +289,7 @@ function addTests () {
 
   runTest('https->http over http, tunnel=default, with proxy response', {
     url: ss.url + '/redirect/http',
+    allowInsecureRedirect: true,
     proxy: s.url
   }, [
     'http connect to localhost:' + ss.port,
