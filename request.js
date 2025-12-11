@@ -1408,6 +1408,7 @@ Request.prototype.onRequestResponse = function (response) {
       // Hack to emit end on close because of a core bug that never fires end
       response.once('close', function () {
         if (!self._ended) {
+          self._ended = true
           self.response.emit('end')
         }
       })
