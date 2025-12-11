@@ -1400,164 +1400,165 @@ Request.prototype.onRequestResponse = function (response) {
   self.clearTimeout()
 
   function responseHandler () {
-    if (self._redirect.onResponse(response)) {
-      return // Ignore the rest of the response
-    }
+    self._redirect.onResponse(response, function (err, followingRedirect) {
+      if (!err && followingRedirect) return // Ignore the rest of the response
+      if (err) self.emit('error', err)
 
-    // Be a good stream and emit end when the response is finished.
-    // Hack to emit end on close because of a core bug that never fires end
-    response.once('close', function () {
-      if (!self._ended) {
-        self.response.emit('end')
-      }
-    })
-
-    response.once('end', function () {
-      self._ended = true
-    })
-
-    var noBody = function (code) {
-      return (
-        self.method === 'HEAD' ||
-        // Informational
-        (code >= 100 && code < 200) ||
-        // No Content
-        code === 204 ||
-        // Not Modified
-        code === 304
-      )
-    }
-
-    var responseContent
-    var downloadSizeTracker = new SizeTrackerStream()
-
-    if ((self.gzip || self.brotli) && !noBody(response.statusCode)) {
-      var contentEncoding = response.headers['content-encoding'] || 'identity'
-      contentEncoding = contentEncoding.trim().toLowerCase()
-
-      // Be more lenient with decoding compressed responses, since (very rarely)
-      // servers send slightly invalid gzip responses that are still accepted
-      // by common browsers.
-      // Always using Z_SYNC_FLUSH is what cURL does.
-      var zlibOptions = {
-        flush: zlib.Z_SYNC_FLUSH,
-        finishFlush: zlib.Z_SYNC_FLUSH
-      }
-
-      if (self.gzip && contentEncoding === 'gzip') {
-        responseContent = zlib.createGunzip(zlibOptions)
-        response.pipe(downloadSizeTracker).pipe(responseContent)
-      } else if (self.gzip && contentEncoding === 'deflate') {
-        responseContent = inflate.createInflate(zlibOptions)
-        response.pipe(downloadSizeTracker).pipe(responseContent)
-      } else if (self.brotli && contentEncoding === 'br') {
-        responseContent = zlib.createBrotliDecompress()
-        response.pipe(downloadSizeTracker).pipe(responseContent)
-      } else {
-        // Since previous versions didn't check for Content-Encoding header,
-        // ignore any invalid values to preserve backwards-compatibility
-        if (contentEncoding !== 'identity') {
-          debug('ignoring unrecognized Content-Encoding ' + contentEncoding)
+      // Be a good stream and emit end when the response is finished.
+      // Hack to emit end on close because of a core bug that never fires end
+      response.once('close', function () {
+        if (!self._ended) {
+          self.response.emit('end')
         }
+      })
+
+      response.once('end', function () {
+        self._ended = true
+      })
+
+      var noBody = function (code) {
+        return (
+          self.method === 'HEAD' ||
+          // Informational
+          (code >= 100 && code < 200) ||
+          // No Content
+          code === 204 ||
+          // Not Modified
+          code === 304
+        )
+      }
+
+      var responseContent
+      var downloadSizeTracker = new SizeTrackerStream()
+
+      if ((self.gzip || self.brotli) && !noBody(response.statusCode)) {
+        var contentEncoding = response.headers['content-encoding'] || 'identity'
+        contentEncoding = contentEncoding.trim().toLowerCase()
+
+        // Be more lenient with decoding compressed responses, since (very rarely)
+        // servers send slightly invalid gzip responses that are still accepted
+        // by common browsers.
+        // Always using Z_SYNC_FLUSH is what cURL does.
+        var zlibOptions = {
+          flush: zlib.Z_SYNC_FLUSH,
+          finishFlush: zlib.Z_SYNC_FLUSH
+        }
+
+        if (self.gzip && contentEncoding === 'gzip') {
+          responseContent = zlib.createGunzip(zlibOptions)
+          response.pipe(downloadSizeTracker).pipe(responseContent)
+        } else if (self.gzip && contentEncoding === 'deflate') {
+          responseContent = inflate.createInflate(zlibOptions)
+          response.pipe(downloadSizeTracker).pipe(responseContent)
+        } else if (self.brotli && contentEncoding === 'br') {
+          responseContent = zlib.createBrotliDecompress()
+          response.pipe(downloadSizeTracker).pipe(responseContent)
+        } else {
+          // Since previous versions didn't check for Content-Encoding header,
+          // ignore any invalid values to preserve backwards-compatibility
+          if (contentEncoding !== 'identity') {
+            debug('ignoring unrecognized Content-Encoding ' + contentEncoding)
+          }
+          responseContent = response.pipe(downloadSizeTracker)
+        }
+      } else {
         responseContent = response.pipe(downloadSizeTracker)
       }
-    } else {
-      responseContent = response.pipe(downloadSizeTracker)
-    }
 
-    if (self.encoding) {
-      if (self.dests.length !== 0) {
-        console.error('Ignoring encoding parameter as this stream is being piped to another stream which makes the encoding option invalid.')
-      } else {
-        responseContent.setEncoding(self.encoding)
-      }
-    }
-
-    // Node by default returns the status message with `latin1` character encoding,
-    // which results in characters lying outside the range of `U+0000 to U+00FF` getting truncated
-    // so that they can be mapped in the given range.
-    // Refer: https://nodejs.org/docs/latest-v12.x/api/buffer.html#buffer_buffers_and_character_encodings
-    //
-    // Exposing `statusMessageEncoding` option to make encoding type configurable.
-    // This would help in correctly representing status messages belonging to range outside of `latin1`
-    //
-    // @note: The Regex `[^\w\s-']` is tested to prevent unnecessary computation of creating a Buffer and
-    // then decoding it when the status message consists of common characters,
-    // specifically belonging to the following set: [a-z, A-Z, 0-9, -, _ ', whitespace]
-    // As in that case, no matter what the encoding type is used for decoding the buffer, the result would remain the same.
-    //
-    // @note: Providing a value in this option will result in force re-encoding of the status message
-    // which may not always be intended by the server - specifically in cases where
-    // server returns a status message which when encoded again with a different character encoding
-    // results in some other characters.
-    // For example: If the server intentionally responds with `ð\x9F\x98\x8A` as status message
-    // but if the statusMessageEncoding option is set to `utf8`, then it would get converted to '😊'.
-    var statusMessage = String(response.statusMessage)
-    if (self.statusMessageEncoding && /[^\w\s-']/.test(statusMessage)) {
-      response.statusMessage = Buffer.from(statusMessage, 'latin1').toString(self.statusMessageEncoding)
-    }
-
-    if (self._paused) {
-      responseContent.pause()
-    }
-
-    self.responseContent = responseContent
-
-    self.emit('response', response)
-
-    self.dests.forEach(function (dest) {
-      self.pipeDest(dest)
-    })
-
-    var responseThresholdEnabled = false
-    var responseBytesLeft
-
-    if (typeof self.maxResponseSize === 'number') {
-      responseThresholdEnabled = true
-      responseBytesLeft = self.maxResponseSize
-    }
-
-    responseContent.on('data', function (chunk) {
-      if (self.timing && !self.responseStarted) {
-        self.responseStartTime = (new Date()).getTime()
-
-        // NOTE: responseStartTime is deprecated in favor of .timings
-        response.responseStartTime = self.responseStartTime
-      }
-      // if response threshold is set, update the response bytes left to hit
-      // threshold. If exceeds, abort the request.
-      if (responseThresholdEnabled) {
-        responseBytesLeft -= chunk.length
-        if (responseBytesLeft < 0) {
-          self.emit('error', new Error('Maximum response size reached'))
-          self.destroy()
-          self.abort()
-          return
+      if (self.encoding) {
+        if (self.dests.length !== 0) {
+          console.error('Ignoring encoding parameter as this stream is being piped to another stream which makes the encoding option invalid.')
+        } else {
+          responseContent.setEncoding(self.encoding)
         }
       }
-      self._destdata = true
-      self.emit('data', chunk)
-    })
-    responseContent.once('end', function (chunk) {
-      self._reqResInfo.response.downloadedBytes = downloadSizeTracker.size
-      self.emit('end', chunk)
-    })
-    responseContent.on('error', function (error) {
-      self.emit('error', error)
-    })
-    responseContent.on('close', function () { self.emit('close') })
 
-    if (self.callback) {
-      self.readResponseBody(response)
-    } else { // if no callback
-      self.on('end', function () {
-        if (self._aborted) {
-          debug('aborted', self.uri.href)
-          return
-        }
-        self.emit('complete', response)
+      // Node by default returns the status message with `latin1` character encoding,
+      // which results in characters lying outside the range of `U+0000 to U+00FF` getting truncated
+      // so that they can be mapped in the given range.
+      // Refer: https://nodejs.org/docs/latest-v12.x/api/buffer.html#buffer_buffers_and_character_encodings
+      //
+      // Exposing `statusMessageEncoding` option to make encoding type configurable.
+      // This would help in correctly representing status messages belonging to range outside of `latin1`
+      //
+      // @note: The Regex `[^\w\s-']` is tested to prevent unnecessary computation of creating a Buffer and
+      // then decoding it when the status message consists of common characters,
+      // specifically belonging to the following set: [a-z, A-Z, 0-9, -, _ ', whitespace]
+      // As in that case, no matter what the encoding type is used for decoding the buffer, the result would remain the same.
+      //
+      // @note: Providing a value in this option will result in force re-encoding of the status message
+      // which may not always be intended by the server - specifically in cases where
+      // server returns a status message which when encoded again with a different character encoding
+      // results in some other characters.
+      // For example: If the server intentionally responds with `ð\x9F\x98\x8A` as status message
+      // but if the statusMessageEncoding option is set to `utf8`, then it would get converted to '😊'.
+      var statusMessage = String(response.statusMessage)
+      if (self.statusMessageEncoding && /[^\w\s-']/.test(statusMessage)) {
+        response.statusMessage = Buffer.from(statusMessage, 'latin1').toString(self.statusMessageEncoding)
+      }
+
+      if (self._paused) {
+        responseContent.pause()
+      }
+
+      self.responseContent = responseContent
+
+      self.emit('response', response)
+
+      self.dests.forEach(function (dest) {
+        self.pipeDest(dest)
       })
-    }
+
+      var responseThresholdEnabled = false
+      var responseBytesLeft
+
+      if (typeof self.maxResponseSize === 'number') {
+        responseThresholdEnabled = true
+        responseBytesLeft = self.maxResponseSize
+      }
+
+      responseContent.on('data', function (chunk) {
+        if (self.timing && !self.responseStarted) {
+          self.responseStartTime = (new Date()).getTime()
+
+          // NOTE: responseStartTime is deprecated in favor of .timings
+          response.responseStartTime = self.responseStartTime
+        }
+        // if response threshold is set, update the response bytes left to hit
+        // threshold. If exceeds, abort the request.
+        if (responseThresholdEnabled) {
+          responseBytesLeft -= chunk.length
+          if (responseBytesLeft < 0) {
+            self.emit('error', new Error('Maximum response size reached'))
+            self.destroy()
+            self.abort()
+            return
+          }
+        }
+        self._destdata = true
+        self.emit('data', chunk)
+      })
+      responseContent.once('end', function (chunk) {
+        self._reqResInfo.response.downloadedBytes = downloadSizeTracker.size
+        self.emit('end', chunk)
+      })
+      responseContent.on('error', function (error) {
+        self.emit('error', error)
+      })
+      responseContent.on('close', function () { self.emit('close') })
+
+      if (self.callback) {
+        self.readResponseBody(response)
+      } else { // if no callback
+        self.on('end', function () {
+          if (self._aborted) {
+            debug('aborted', self.uri.href)
+            return
+          }
+          self.emit('complete', response)
+        })
+      }
+    })
   }
 
   function forEachAsync (items, fn, cb) {
